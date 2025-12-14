@@ -1,63 +1,88 @@
 #!/usr/bin/env bash
-
-# This script MIRRORS the 'dev-env' logic from your previous repo.
-# It DESTRUCTIVELY wipes the target directory and replaces it with the one from the repo.
-
 set -e
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIGS_DIR="$REPO_ROOT/configs"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+CONFIGS_DIR="$script_dir/configs"
 
-# Text Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+dry_run="0"
+grep_filter=""
+
+# parse arguments
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--dry" ]]; then
+    dry_run="1"
+  else
+    grep_filter="$1"
+  fi
+  shift
+done
 
 log() {
-    echo -e "${BLUE}[DEPLOY]${NC} $1"
+  if [[ $dry_run == "1" ]]; then
+    echo "[DRY_RUN]: $1"
+  else
+    echo "$1"
+  fi
 }
 
 warn() {
-    echo -e "${RED}[WARNING]${NC} $1"
+  log "[WARNING] $1"
+}
+
+info() {
+  log "[INFO] $1"
 }
 
 deploy_dir() {
-    local source_dir="$1"
-    local target_parent="$2"
-    
-    if [ ! -d "$source_dir" ]; then
-        return
+  local source_dir="$1"
+  local target_parent="$2"
+
+  if [ ! -d "$source_dir" ]; then
+    info "Source directory $source_dir does not exist, skipping."
+    return
+  fi
+
+  shopt -s nullglob
+  for item in "$source_dir"/*; do
+    local name="$(basename "$item")"
+    local target_path="$target_parent/$name"
+
+    if [[ -n "$grep_filter" && "$name" != *"$grep_filter"* ]]; then
+      info "Filtered out $item by grep \"$grep_filter\""
+      continue
     fi
 
-    # Loop through direct children (directories)
-    for item in "$source_dir"/*; do
-        local name=$(basename "$item")
-        local target_path="$target_parent/$name"
-
-        if [ -d "$item" ]; then
-            log "Config: $name"
-            if [ -d "$target_path" ]; then
-                 # echo "  Removing existing: $target_path"
-                 rm -rf "$target_path"
-            fi
-            
-            # echo "  Copying to: $target_path"
-            mkdir -p "$(dirname "$target_path")"
-            cp -r "$item" "$target_path"
-        fi
-    done
+    if [ -d "$item" ]; then
+      log "Deploying directory: $item → $target_path"
+      if [ -d "$target_path" ]; then
+        warn "Removing existing: $target_path"
+        [[ $dry_run == "0" ]] && rm -rf "$target_path"
+      fi
+      [[ $dry_run == "0" ]] && mkdir -p "$target_parent"
+      log "Copying: $item → $target_path"
+      [[ $dry_run == "0" ]] && cp -a "$item" "$target_path" || info "[DRY_RUN]: skipped copy"
+    elif [ -f "$item" ]; then
+      log "Deploying file: $item → $target_path"
+      [[ $dry_run == "0" ]] && mkdir -p "$(dirname "$target_path")"
+      [[ $dry_run == "0" ]] && cp "$item" "$target_path" || info "[DRY_RUN]: skipped copy"
+    else
+      warn "Skipping unknown item type: $item"
+    fi
+  done
+  shopt -u nullglob
 }
 
 deploy_file() {
-    local source_file="$1"
-    local target_file="$2"
-    
-    if [ -f "$source_file" ]; then
-        log "File: $(basename "$source_file")"
-        rm -f "$target_file"
-        cp "$source_file" "$target_file"
-    fi
+  local source_file="$1"
+  local target_file="$2"
+
+  if [[ -f "$source_file" ]]; then
+    log "Deploying file: $source_file → $target_file"
+    [[ $dry_run == "0" ]] && mkdir -p "$(dirname "$target_file")"
+    [[ $dry_run == "0" ]] && cp "$source_file" "$target_file" || info "[DRY_RUN]: skipped copy"
+  else
+    info "File $source_file not found, skipping."
+  fi
 }
 
 echo "========================================"
@@ -67,18 +92,24 @@ echo "Source: $CONFIGS_DIR"
 echo "Target: $HOME"
 echo ""
 
-# 1. Deploy .config folders (e.g. nvim, hypr, kitty)
-#    This wipes ~/.config/nvim and replaces it with configs/.config/nvim
+# 1. Deploy .config folders
 deploy_dir "$CONFIGS_DIR/.config" "$HOME/.config"
 
-# 2. Deploy .local folders (e.g. scripts)
-#    This wipes ~/.local/scripts and replaces it with configs/.local/scripts
+# 2. Deploy .local folders
 deploy_dir "$CONFIGS_DIR/.local" "$HOME/.local"
 
 # 3. Deploy loose dotfiles
-#    You must manually add files here if you want them copied
 deploy_file "$CONFIGS_DIR/.zshrc" "$HOME/.zshrc"
 # deploy_file "$CONFIGS_DIR/.xprofile" "$HOME/.xprofile"
 
 echo ""
-echo -e "${GREEN}Done!${NC}"
+log "Reloading hyprland..."
+if command -v hyprctl >/dev/null 2>&1; then
+  [[ $dry_run == "0" ]] && hyprctl reload
+  log "Hyprland reloaded"
+else
+  warn "hyprctl not found, skipping reload"
+fi
+
+echo ""
+log "Done!"
