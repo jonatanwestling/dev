@@ -11,4 +11,6 @@ if [ -f "$HOME/.local/scripts/dev-env" ]; then
 fi
 
 autoload -Uz compinit && compinit
-prompt adam1
+
+eval "$(starship init zsh)"
+
