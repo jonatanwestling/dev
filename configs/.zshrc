@@ -14,3 +14,4 @@ autoload -Uz compinit && compinit
 
 eval "$(starship init zsh)"
 
+export PATH="$HOME/.local/scripts:$PATH"
